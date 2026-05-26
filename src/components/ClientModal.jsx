@@ -47,8 +47,8 @@ export default function ClientModal({ client, providerId, businessId, onClose, o
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (!form.name.trim() || !form.email.trim()) {
-      setError('Name and email are required.')
+    if (!form.name.trim()) {
+      setError('Name is required.')
       return
     }
 
@@ -93,7 +93,7 @@ export default function ClientModal({ client, providerId, businessId, onClose, o
           )}
 
           <Field label="Full Name *" value={form.name} onChange={v => set('name', v)} placeholder="Jane Smith" required />
-          <Field label="Email *" type="email" value={form.email} onChange={v => set('email', v)} placeholder="jane@email.com" required />
+          <Field label="Email" type="email" value={form.email} onChange={v => set('email', v)} placeholder="jane@email.com" />
           <Field label="Phone" type="tel" value={form.phone} onChange={v => set('phone', v)} placeholder="(555) 555-5555" />
           <Field label="Service Type" value={form.service_type} onChange={v => set('service_type', v)} placeholder="Piano Lessons, Math Tutoring…" />
 
