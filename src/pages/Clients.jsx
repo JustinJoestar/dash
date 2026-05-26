@@ -1,21 +1,25 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../App'
+import { useAuth, useBusiness } from '../App'
 import { formatCurrency, formatDate, getSessionStatus } from '../lib/utils'
 import ClientModal from '../components/ClientModal'
 import PaymentHistoryModal from '../components/PaymentHistoryModal'
 import SessionModal from '../components/SessionModal'
 import GenerateSessionsModal from '../components/GenerateSessionsModal'
 import StatusBadge from '../components/StatusBadge'
-import { Plus, Edit2, Trash2, History, ChevronDown, ChevronUp, Calendar, Zap, X } from 'lucide-react'
+import { Plus, Edit2, Trash2, History, ChevronDown, ChevronUp, Calendar, Zap, X, Building2 } from 'lucide-react'
+import { Skeleton } from '../components/Skeleton'
 
 const scheduleLabel = { monthly: 'Monthly', per_session: 'Per session', package: 'One-time' }
 
 export default function Clients() {
   const { user } = useAuth()
+  const { activeBusiness, businesses } = useBusiness()
   const [clients, setClients] = useState([])
   const [sessions, setSessions] = useState({})
   const [loading, setLoading] = useState(true)
+  const [unassignedCount, setUnassignedCount] = useState(0)
+  const [importingUnassigned, setImportingUnassigned] = useState(false)
   const [expanded, setExpanded] = useState(null)
   const [modalClient, setModalClient] = useState(undefined)
   const [historyClient, setHistoryClient] = useState(null)
@@ -24,16 +28,39 @@ export default function Clients() {
   const [deletingId, setDeletingId] = useState(null)
   const [markingPaid, setMarkingPaid] = useState(null)
 
-  useEffect(() => { fetchClients() }, [])
+  useEffect(() => { fetchClients() }, [activeBusiness?.id])
 
   async function fetchClients() {
-    const { data } = await supabase
-      .from('clients')
-      .select('*')
-      .eq('provider_id', user.id)
-      .order('name')
+    setLoading(true)
+    let query = supabase.from('clients').select('*').eq('provider_id', user.id).order('name')
+    if (activeBusiness) query = query.eq('business_id', activeBusiness.id)
+    else query = query.is('business_id', null)
+
+    const { data } = await query
     setClients(data || [])
     setLoading(false)
+
+    if (activeBusiness) {
+      const { count } = await supabase
+        .from('clients')
+        .select('*', { count: 'exact', head: true })
+        .eq('provider_id', user.id)
+        .is('business_id', null)
+      setUnassignedCount(count || 0)
+    } else {
+      setUnassignedCount(0)
+    }
+  }
+
+  async function importUnassigned() {
+    setImportingUnassigned(true)
+    await supabase
+      .from('clients')
+      .update({ business_id: activeBusiness.id })
+      .eq('provider_id', user.id)
+      .is('business_id', null)
+    setImportingUnassigned(false)
+    fetchClients()
   }
 
   async function fetchSessions(clientId) {
@@ -46,12 +73,8 @@ export default function Clients() {
   }
 
   function toggleExpand(clientId) {
-    if (expanded === clientId) {
-      setExpanded(null)
-    } else {
-      setExpanded(clientId)
-      fetchSessions(clientId)
-    }
+    if (expanded === clientId) setExpanded(null)
+    else { setExpanded(clientId); fetchSessions(clientId) }
   }
 
   async function deleteClient(client) {
@@ -96,115 +119,157 @@ export default function Clients() {
     fetchSessions(clientId)
   }
 
+  if (businesses.length === 0) {
+    return (
+      <div className="p-6 md:p-8 max-w-3xl w-full">
+        <h1 className="text-xl font-semibold text-slate-900 mb-6">Clients</h1>
+        <div className="text-center py-16 text-slate-400">
+          <Building2 size={28} className="mx-auto mb-3 text-slate-300" />
+          <p className="font-medium text-slate-600 mb-1">No business yet</p>
+          <p className="text-sm">Create a business from the sidebar to get started.</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="p-4 md:p-8 max-w-3xl w-full">
+    <div className="p-6 md:p-8 max-w-3xl w-full">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Clients</h1>
+        <h1 className="text-xl font-semibold text-slate-900">Clients</h1>
         <button
           onClick={() => setModalClient(null)}
-          className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          className="flex items-center gap-1.5 bg-slate-900 hover:bg-slate-700 text-white px-3.5 py-2 rounded-lg text-sm font-medium transition-colors"
         >
-          <Plus size={16} />
+          <Plus size={15} />
           Add Client
         </button>
       </div>
 
+      {activeBusiness && unassignedCount > 0 && (
+        <div className="mb-5 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <p className="text-sm text-amber-800">
+            <span className="font-semibold">{unassignedCount}</span> client{unassignedCount !== 1 ? 's' : ''} not assigned to any business.
+          </p>
+          <button
+            onClick={importUnassigned}
+            disabled={importingUnassigned}
+            className="shrink-0 text-xs font-semibold text-amber-700 hover:text-amber-900 border border-amber-300 hover:border-amber-500 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          >
+            {importingUnassigned ? 'Importing…' : `Import to ${activeBusiness.name}`}
+          </button>
+        </div>
+      )}
+
       {loading ? (
-        <p className="text-slate-400 text-sm text-center py-12">Loading…</p>
+        <div className="space-y-2">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="bg-white rounded-xl border border-slate-200 p-4">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 space-y-2">
+                  <Skeleton className="h-4 w-36" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+                <Skeleton className="h-7 w-20 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
       ) : clients.length === 0 ? (
         <div className="text-center py-16 text-slate-400">
-          <p className="mb-2">No clients yet.</p>
-          <button onClick={() => setModalClient(null)} className="text-emerald-600 hover:underline text-sm font-medium">
-            Add your first client
+          <p className="mb-2 text-sm">No clients yet{activeBusiness ? ` in ${activeBusiness.name}` : ''}.</p>
+          <button onClick={() => setModalClient(null)} className="text-emerald-600 hover:text-emerald-700 text-sm font-medium">
+            Add your first client →
           </button>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-2">
           {clients.map(client => {
             const clientSessions = sessions[client.id] || []
             const isExpanded = expanded === client.id
             const unpaidCount = clientSessions.filter(s => s.status === 'unpaid').length
 
             return (
-              <div key={client.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+              <div key={client.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                {/* Client row */}
+                <div className="flex items-center gap-3 px-4 py-3.5">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="font-medium text-slate-900 text-sm">{client.name}</h3>
+                      {client.service_type && (
+                        <span className="text-xs text-slate-400">{client.service_type}</span>
+                      )}
+                      {client.rate && (
+                        <span className="text-xs text-slate-400">{formatCurrency(client.rate)} / {scheduleLabel[client.payment_schedule]?.toLowerCase()}</span>
+                      )}
+                    </div>
+                    {client.email && (
+                      <p className="text-xs text-slate-400 mt-0.5">{client.email}{client.phone ? ` · ${client.phone}` : ''}</p>
+                    )}
+                    {client.notes && <p className="text-xs text-slate-300 italic mt-0.5 line-clamp-1">{client.notes}</p>}
+                  </div>
 
-                {/* Client info */}
-                <div className="p-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-bold text-slate-900 text-base">{client.name}</h3>
-                      <p className="text-sm text-slate-500 mt-0.5">
-                        {[client.service_type, client.rate ? formatCurrency(client.rate) : null, scheduleLabel[client.payment_schedule]].filter(Boolean).join(' · ')}
-                      </p>
-                      {client.email && <p className="text-xs text-slate-400 mt-1">{client.email}{client.phone ? ` · ${client.phone}` : ''}</p>}
-                      {client.notes && <p className="text-xs text-slate-400 italic mt-1.5 line-clamp-1">{client.notes}</p>}
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button onClick={() => setHistoryClient(client)} title="Payment history" className="p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
-                        <History size={15} />
-                      </button>
-                      <button onClick={() => setModalClient(client)} title="Edit" className="p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
-                        <Edit2 size={15} />
-                      </button>
-                      <button onClick={() => deleteClient(client)} disabled={deletingId === client.id} title="Delete" className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40">
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button onClick={() => setHistoryClient(client)} title="Payment history" className="p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">
+                      <History size={14} />
+                    </button>
+                    <button onClick={() => setModalClient(client)} title="Edit" className="p-2 text-slate-300 hover:text-slate-600 hover:bg-slate-50 rounded-lg transition-colors">
+                      <Edit2 size={14} />
+                    </button>
+                    <button onClick={() => deleteClient(client)} disabled={deletingId === client.id} title="Delete" className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-40">
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
 
-                {/* Sessions toggle bar — always visible */}
+                {/* Sessions toggle */}
                 <button
                   onClick={() => toggleExpand(client.id)}
-                  className={`w-full flex items-center justify-between px-5 py-3 text-sm font-medium transition-colors border-t ${
+                  className={`w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium transition-colors border-t ${
                     isExpanded
                       ? 'bg-slate-900 text-white border-slate-900'
-                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100 border-slate-100'
+                      : 'bg-slate-50 text-slate-500 hover:bg-slate-100 border-slate-100'
                   }`}
                 >
-                  <span className="flex items-center gap-2">
-                    <Calendar size={14} />
+                  <span className="flex items-center gap-1.5">
+                    <Calendar size={12} />
                     Sessions
-                    {isExpanded && clientSessions.length > 0 && (
-                      <span className="text-xs opacity-60">{clientSessions.length} total{unpaidCount > 0 ? ` · ${unpaidCount} unpaid` : ''}</span>
-                    )}
-                    {!isExpanded && clientSessions.length === 0 && (
-                      <span className="text-xs opacity-50">tap to add</span>
-                    )}
                     {!isExpanded && clientSessions.length > 0 && (
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${unpaidCount > 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                      <span className={`px-1.5 py-0.5 rounded-full font-medium ${unpaidCount > 0 ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
                         {unpaidCount > 0 ? `${unpaidCount} unpaid` : 'all paid'}
                       </span>
                     )}
+                    {!isExpanded && clientSessions.length === 0 && (
+                      <span className="opacity-50">tap to add</span>
+                    )}
+                    {isExpanded && clientSessions.length > 0 && (
+                      <span className="opacity-50">{clientSessions.length} total{unpaidCount > 0 ? ` · ${unpaidCount} unpaid` : ''}</span>
+                    )}
                   </span>
-                  {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+                  {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                 </button>
 
                 {/* Sessions panel */}
                 {isExpanded && (
                   <div className="border-t border-slate-100">
-
-                    {/* Action buttons */}
-                    <div className="flex gap-2 p-4 bg-slate-50 border-b border-slate-100">
+                    <div className="flex gap-2 px-4 py-3 bg-slate-50 border-b border-slate-100">
                       <button
                         onClick={() => setSessionClient(client)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-700 text-white text-xs font-medium rounded-lg transition-colors"
                       >
-                        <Plus size={13} />
+                        <Plus size={12} />
                         Add Session
                       </button>
                       <button
                         onClick={() => setGenerateClient(client)}
-                        className="flex items-center gap-1.5 px-3 py-2 bg-white border border-slate-200 hover:border-slate-400 text-slate-700 text-xs font-medium rounded-lg transition-colors"
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-400 text-slate-600 text-xs font-medium rounded-lg transition-colors"
                       >
-                        <Zap size={13} />
+                        <Zap size={12} />
                         Generate Recurring
                       </button>
                     </div>
 
-                    {/* Session rows */}
                     {clientSessions.length === 0 ? (
-                      <div className="text-center py-8 text-slate-400 text-sm">
+                      <div className="text-center py-8 text-slate-400 text-xs">
                         No sessions yet — add one above.
                       </div>
                     ) : (
@@ -212,11 +277,11 @@ export default function Clients() {
                         {clientSessions.map(session => {
                           const status = getSessionStatus(session)
                           return (
-                            <div key={session.id} className={`flex items-center gap-3 px-4 py-3.5 ${status === 'late' ? 'bg-red-50/40' : ''}`}>
+                            <div key={session.id} className={`flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors ${status === 'late' ? 'bg-red-50/30' : ''}`}>
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-medium text-slate-800">{formatDate(session.session_date)}</span>
-                                  <span className="text-sm text-slate-500">{formatCurrency(session.amount)}</span>
+                                  <span className="text-sm font-medium text-slate-700">{formatDate(session.session_date)}</span>
+                                  <span className="text-sm text-slate-400 tabular-nums">{formatCurrency(session.amount)}</span>
                                   <StatusBadge status={status} />
                                 </div>
                                 {session.notes && <p className="text-xs text-slate-400 mt-0.5">{session.notes}</p>}
@@ -226,7 +291,7 @@ export default function Clients() {
                                   <button
                                     onClick={() => markSessionPaid(session)}
                                     disabled={markingPaid === session.id}
-                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-40"
+                                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium rounded-lg transition-colors disabled:opacity-40"
                                   >
                                     {markingPaid === session.id ? '…' : 'Mark Paid'}
                                   </button>
@@ -235,7 +300,7 @@ export default function Clients() {
                                   onClick={() => deleteSession(session)}
                                   className="p-1.5 text-slate-300 hover:text-red-400 hover:bg-red-50 rounded-lg transition-colors"
                                 >
-                                  <X size={13} />
+                                  <X size={12} />
                                 </button>
                               </div>
                             </div>
@@ -252,7 +317,13 @@ export default function Clients() {
       )}
 
       {modalClient !== undefined && (
-        <ClientModal client={modalClient} providerId={user.id} onClose={() => setModalClient(undefined)} onSaved={() => { setModalClient(undefined); fetchClients() }} />
+        <ClientModal
+          client={modalClient}
+          providerId={user.id}
+          businessId={activeBusiness?.id}
+          onClose={() => setModalClient(undefined)}
+          onSaved={() => { setModalClient(undefined); fetchClients() }}
+        />
       )}
       {historyClient && <PaymentHistoryModal client={historyClient} onClose={() => setHistoryClient(null)} />}
       {sessionClient && <SessionModal client={sessionClient} providerId={user.id} onClose={() => setSessionClient(null)} onSaved={() => onSessionSaved(sessionClient.id)} />}
